@@ -774,19 +774,23 @@ export class BlobSyncManager {
 							fileStat,
 						);
 
-						if (cachedHash) {
-							// Cache hit: compare hashes directly (no read needed)
-							if (cachedHash !== ref.hash) {
-								this.enqueueUpload(path, 0, file.stat.size);
-								uploadQueued++;
-							}
-						} else if (ref.size !== file.stat.size) {
-							// No cache, but size differs — definitely changed
+						// ISSUE-19: a cache miss is not evidence the file
+						// is unchanged. The old code skipped a file whose
+						// size matched the CRDT ref when no stat-matching
+						// cache entry existed, so a same-size offline
+						// edit (a .base layout change, a Canvas edit
+						// that kept its byte count) never reached the
+						// upload queue and stayed unsynced until some
+						// later modify event happened, if one ever did.
+						// Queue on any mismatch, including a miss, and
+						// let processUpload do the full hash check: it
+						// skips the upload when the bytes still match
+						// the CRDT ref, so this costs one hash per
+						// cache-miss blob at reconcile, not a bad upload.
+						if (cachedHash !== ref.hash) {
 							this.enqueueUpload(path, 0, file.stat.size);
 							uploadQueued++;
 						}
-						// If sizes match and no cache, skip — processUpload will
-						// do a full hash check if triggered by a future modify event
 					}
 				}
 				continue;
