@@ -47,6 +47,15 @@ export class ServerAckTracker {
 
 	private _lastCandidateId: string | null = null;
 	private _lastConfirmedCandidateId: string | null = null;
+	/**
+	 * ISSUE-68 latch: once the current candidate has been confirmed by a
+	 * server echo, later echoes must not un-confirm it. Only a NEW
+	 * candidate (a fresh local edit, a startup replacement, or a server
+	 * epoch change) clears the latch. Before this, every echo re-voted on
+	 * the same candidate forever, and one non-dominating echo reverted a
+	 * valid receipt to "local state not yet received."
+	 */
+	private _candidateConfirmed = false;
 	private _lastCandidateSvHash: string | null = null;
 	private _lastCausedByOpId: string | null = null;
 
@@ -112,6 +121,7 @@ export class ServerAckTracker {
 				this._lastUnconfirmedCandidateSv = encodeStateVector();
 				this._candidateCapturedAt = Date.now();
 				this._serverAppliedLocalState = false;
+				this._candidateConfirmed = false;
 				// Baseline for the durability check.  The candidate is confirmed
 				// only once the server reports a persist counter beyond this.
 				this._generationAtCapture = this._lastSeenServerGeneration;
@@ -240,9 +250,10 @@ export class ServerAckTracker {
 		if (durability !== null) this._serverPersistenceDegraded = durability.degraded === true;
 
 		// A restart resets the counter, so a client holding generation 40 would
-		// otherwise wait forever for 41.  Re-baseline instead, and leave any
-		// pending candidate unconfirmed: the new instance loaded from storage and
-		// may not hold an unsaved change, so claiming otherwise would be a lie.
+		// otherwise wait forever for 41.  Re-baseline instead, and move any
+		// pending candidate to unknown: the new instance loaded from storage and
+		// may not hold an unsaved change, so claiming otherwise would be a lie,
+		// and claiming "not received" would contradict the old instance's receipt.
 		const epochChanged =
 			durability !== null
 			&& this._lastServerGenerationEpoch !== null
@@ -257,22 +268,42 @@ export class ServerAckTracker {
 
 		let confirmed: boolean | null = null;
 		if (this._lastUnconfirmedCandidateSv !== null) {
-			if (durability !== null) {
-				// Cannot confirm until a baseline exists to advance past.
-				confirmed =
-					!epochChanged
-					&& this._generationAtCapture !== null
-					&& durability.generation > this._generationAtCapture;
-				if (this._generationAtCapture === null) {
-					this._generationAtCapture = durability.generation;
-				}
+			if (epochChanged) {
+				// ISSUE-68: a new server epoch means a new server instance.
+				// The previous instance's receipt does not describe this
+				// instance's storage, so the honest status is UNKNOWN
+				// (null), not a false "not yet received" for state the
+				// previous instance did store. The candidate stays pending
+				// and can re-confirm once the new instance's persist
+				// counter advances past the re-baselined capture point.
+				confirmed = null;
+				this._candidateConfirmed = false;
+				this._serverAppliedLocalState = null;
 			} else {
-				confirmed = isStateVectorGe(serverSv, this._lastUnconfirmedCandidateSv);
-			}
-			this._serverAppliedLocalState = confirmed;
-			if (confirmed) {
-				this._lastKnownServerReceiptEchoAt = this._lastServerReceiptEchoAt;
-				this._lastConfirmedCandidateId = this._lastCandidateId;
+				if (durability !== null) {
+					// Cannot confirm until a baseline exists to advance past.
+					confirmed =
+						this._generationAtCapture !== null
+						&& durability.generation > this._generationAtCapture;
+					if (this._generationAtCapture === null) {
+						this._generationAtCapture = durability.generation;
+					}
+				} else {
+					confirmed = isStateVectorGe(serverSv, this._lastUnconfirmedCandidateSv);
+				}
+				// ISSUE-68 latch: a candidate that already confirmed stays
+				// confirmed. A later non-dominating echo (the reporter saw
+				// one with the same encoded byte count) must not revoke a
+				// valid receipt for the same candidate.
+				if (this._candidateConfirmed) {
+					confirmed = true;
+				}
+				this._serverAppliedLocalState = confirmed;
+				if (confirmed) {
+					this._candidateConfirmed = true;
+					this._lastKnownServerReceiptEchoAt = this._lastServerReceiptEchoAt;
+					this._lastConfirmedCandidateId = this._lastCandidateId;
+				}
 			}
 		}
 		this.trace?.("receipt", "receipt-server-echo", {
@@ -337,6 +368,7 @@ export class ServerAckTracker {
 		this._generationAtCapture = null;
 		this._lastUnconfirmedCandidateSv = null;
 		this._candidateCapturedAt = null;
+		this._candidateConfirmed = false;
 		this._serverAppliedLocalState = null;
 		this._lastServerReceiptEchoAt = null;
 		this._lastKnownServerReceiptEchoAt = null;
@@ -379,6 +411,7 @@ export class ServerAckTracker {
 			// server dominance check prevents that from producing a false true.
 			this._lastUnconfirmedCandidateSv = currentSv;
 			this._candidateCapturedAt = Date.now();
+			this._candidateConfirmed = false;
 			this._serverAppliedLocalState = false;
 			this.trace?.("receipt", "receipt-startup-candidate-validation", {
 				outcome: "doc-ahead-replaced",
@@ -395,6 +428,7 @@ export class ServerAckTracker {
 		});
 		this._lastUnconfirmedCandidateSv = null;
 		this._candidateCapturedAt = null;
+		this._candidateConfirmed = false;
 		this._serverAppliedLocalState = null;
 		this._persistAsync();
 	}

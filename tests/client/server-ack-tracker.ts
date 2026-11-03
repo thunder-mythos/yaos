@@ -12,6 +12,7 @@ import * as Y from "yjs";
 import { ServerAckTracker } from "../../src/sync/serverAckTracker";
 import { InMemoryCandidateStore, type ScopeKey, type ScopeMetadata } from "../../src/sync/candidateStore";
 import { isStateVectorGe } from "../../src/sync/stateVectorAck";
+import { ORIGIN_DISK_SYNC, ORIGIN_SEED } from "../../src/sync/origins";
 import { suite } from "../harness.ts";
 
 const s = suite("server-ack-tracker");
@@ -765,4 +766,104 @@ s.section("Test 25: withActiveOpId attributes candidate capture to the active op
 	const latestData = candidates.at(-1)?.data as Record<string, unknown> | undefined;
 	s.check(latestData?.causedByOpId === null, "active op id is restored after scoped mutation");
 }
+// ── Test 26: ISSUE-68 — a confirmed candidate is latched ─────────────────────
+
+s.section("Test 26: later non-dominating echo does not un-confirm a latched receipt");
+{
+	const doc = makeDoc(126);
+	const provider = {};
+	const tracker = new ServerAckTracker();
+	attachTracker(tracker, doc, provider, null);
+	await tracker.onStartup(new InMemoryCandidateStore(), BASE_SCOPE);
+
+	doc.getText("t").insert(0, "confirmed edit");
+	tracker.recordServerSvEcho(Y.encodeStateVector(doc));
+	s.check(tracker.serverAppliedLocalState === true, "confirmed: true");
+
+	// Reporter shape (ISSUE-68): a later echo that does not dominate the
+	// candidate must not revoke the receipt for that same candidate.
+	tracker.recordServerSvEcho(Y.encodeStateVector(new Y.Doc()));
+	s.check(tracker.serverAppliedLocalState === true, "non-dominating echo after confirm: still true (latched)");
+
+	// Only a NEW local edit may reset the receipt (covered by Test 9/10).
+	doc.getText("t").insert(0, "new edit");
+	s.check(tracker.serverAppliedLocalState === false, "new local edit after latch: false again");
+}
+
+// ── Test 27: ISSUE-68 — server epoch change moves receipt to unknown ────────
+
+s.section("Test 27: epoch change sets state to unknown (null), not false, and can re-confirm");
+{
+	const doc = makeDoc(127);
+	const provider = {};
+	const tracker = new ServerAckTracker();
+	attachTracker(tracker, doc, provider, null);
+	await tracker.onStartup(new InMemoryCandidateStore(), BASE_SCOPE);
+
+	doc.getText("t").insert(0, "durable edit");
+	const sv = Y.encodeStateVector(doc);
+
+	// First echo establishes the generation baseline; second confirms.
+	tracker.recordServerSvEcho(sv, { generation: 5, epoch: "epoch-1" });
+	s.check(tracker.serverAppliedLocalState === false, "baseline echo: not yet confirmed");
+	tracker.recordServerSvEcho(sv, { generation: 6, epoch: "epoch-1" });
+	s.check(tracker.serverAppliedLocalState === true, "advanced generation: confirmed");
+
+	// Server restart (new epoch): the old receipt no longer describes
+	// THIS server instance. Status must become unknown, not a false
+	// "not yet received" for state the previous instance did store.
+	tracker.recordServerSvEcho(sv, { generation: 0, epoch: "epoch-2" });
+	s.check(tracker.serverAppliedLocalState === null, "epoch change: state unknown (null), not false");
+	s.check(tracker.hasUnconfirmedCandidate === true, "epoch change: candidate still pending re-confirmation");
+
+	// The new instance persists again: generation advances past the
+	// re-baselined capture point and the candidate re-confirms.
+	tracker.recordServerSvEcho(sv, { generation: 1, epoch: "epoch-2" });
+	s.check(tracker.serverAppliedLocalState === true, "new epoch advanced generation: confirmed again");
+}
+
+// ── Test 28: ISSUE-68 — maintenance origins are tracked like any local write ─
+
+s.section("Test 28: maintenance-origin writes carrying new content are tracked, not skipped");
+{
+	// A repair, disk-sync, or seed write that changes doc content is new
+	// local state the server has not confirmed. Skipping it would leave a
+	// confirmed receipt standing over unacked state: the mirror image of
+	// the false warning ISSUE-68 reports. Origin does not exempt a write
+	// from tracking. Only the echo latch (Test 26) protects a receipt,
+	// and it protects it against later echoes, not against new writes.
+
+	// Case A: no candidate at all — a seed write captures, like any edit.
+	const docA = makeDoc(128);
+	const trackerA = new ServerAckTracker();
+	attachTracker(trackerA, docA, {}, null);
+	await trackerA.onStartup(new InMemoryCandidateStore(), BASE_SCOPE);
+	docA.transact(() => {
+		docA.getText("t").insert(0, "schema seed");
+	}, ORIGIN_SEED);
+	s.check(trackerA.serverAppliedLocalState === false, "seed write, no candidate: unconfirmed until echoed");
+	s.check(trackerA.lastCandidateId !== null, "seed write, no candidate: candidate captured");
+
+	// Case B: confirmed receipt, then a disk-sync write (the
+	// syncFileFromDisk path) carrying new disk content. The receipt must
+	// fall to unconfirmed: the server has not confirmed this state. A
+	// later dominating echo re-confirms it, so the warning is transient,
+	// not stuck.
+	const docB = makeDoc(129);
+	const trackerB = new ServerAckTracker();
+	attachTracker(trackerB, docB, {}, null);
+	await trackerB.onStartup(new InMemoryCandidateStore(), BASE_SCOPE);
+	docB.getText("t").insert(0, "user edit");
+	trackerB.recordServerSvEcho(Y.encodeStateVector(docB));
+	s.check(trackerB.serverAppliedLocalState === true, "confirmed before disk-sync write");
+	const confirmedCandidateId = trackerB.lastCandidateId;
+	docB.transact(() => {
+		docB.getText("t").insert(0, " disk-synced");
+	}, ORIGIN_DISK_SYNC);
+	s.check(trackerB.serverAppliedLocalState === false, "disk-sync write after confirm: unconfirmed again");
+	s.check(trackerB.lastCandidateId !== confirmedCandidateId, "disk-sync write after confirm: candidate recaptured");
+	trackerB.recordServerSvEcho(Y.encodeStateVector(docB));
+	s.check(trackerB.serverAppliedLocalState === true, "dominating echo after disk-sync write: confirmed again");
+}
+
 await s.done();

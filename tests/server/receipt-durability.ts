@@ -165,9 +165,18 @@ s.section("Test 5: a server restart re-baselines instead of hanging");
 	const parsed = parseSvEchoMessageDetailed(JSON.stringify(restart));
 	if (parsed.kind !== "valid_sv_echo") throw new Error("restart echo did not parse");
 	tracker.recordServerSvEcho(parsed.sv, parsed.durability);
+	// ISSUE-68 semantics (Thunder fix iteration 1): an epoch change moves
+	// the receipt to UNKNOWN (null), not false. The new instance may not
+	// hold the change, but reporting "not received" would contradict the
+	// previous instance's receipt and trains the user to ignore the one
+	// signal that says whether the server holds their state.
 	s.check(
-		tracker.serverAppliedLocalState === false,
-		"the restart echo does not confirm — the new instance may not hold the change",
+		tracker.serverAppliedLocalState === null,
+		"the restart echo does not confirm — state is unknown under the new epoch",
+	);
+	s.check(
+		tracker.hasUnconfirmedCandidate === true,
+		"the candidate stays pending re-confirmation after the restart",
 	);
 
 	// And progress on the new instance confirms normally.
