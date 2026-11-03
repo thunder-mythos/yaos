@@ -36,6 +36,7 @@ import {
 	removeCachedHash,
 } from "./blobHashCache";
 import { PreservedUnresolvedRegistry, type PreservedUnresolvedEntry, type PreservedUnresolvedReason } from "./preservedUnresolved";
+import { classifyMissingBlobOnDisk } from "../runtime/reconcile/missingOnDiskPolicy";
 
 // -------------------------------------------------------------------
 // Config
@@ -668,8 +669,12 @@ export class BlobSyncManager {
 		let skipped = 0;
 
 		// Collect non-md, non-excluded disk files
+		const allVaultFiles = this.app.vault.getFiles();
+		// Full on-disk listing: SYNC-01 blob classification needs true
+		// absence from disk, not just absence from the syncable set.
+		const allDiskPaths = new Set(allVaultFiles.map((file) => file.path));
 		const diskBlobs = new Map<string, TFile>();
-		for (const file of this.app.vault.getFiles()) {
+		for (const file of allVaultFiles) {
 			if (
 				!isBlobSyncable(
 					file.path,
@@ -701,11 +706,35 @@ export class BlobSyncManager {
 			}
 		});
 
-		// CRDT blobs not on disk → schedule download
+		// CRDT blobs not on disk → schedule download, unless the blob was
+		// deleted on this device while the plugin was off (SYNC-01 twin).
+		let offlineDeletes = 0;
 		for (const path of crdtBlobPaths) {
 			if (!diskBlobs.has(path)) {
 				const ref = this.vaultSync.pathToBlob.get(path);
 				if (ref) {
+					const missingAction = classifyMissingBlobOnDisk({
+						mode,
+						absentFromDiskListing: !allDiskPaths.has(path),
+						isSyncable: isBlobSyncable(
+							path,
+							excludePatterns,
+							this.app.vault.configDir,
+						),
+						cachedHash: this.hashCache[path]?.hash ?? null,
+						crdtHash: ref.hash,
+					});
+					if (missingAction.kind === "offline-delete") {
+						this.vaultSync.deleteBlobRef(path);
+						removeCachedHash(this.hashCache, path);
+						offlineDeletes++;
+						continue;
+					}
+					// offline-delete-conflict (CRDT moved past the cached
+					// hash) intentionally keeps the download: the blob
+					// plane has no conflict-artifact path for a file that
+					// is absent on disk, and resurrecting loses no content.
+					// The delete simply does not stick in that case.
 					this.scheduleDownload(path, ref.hash, ref.size);
 					downloadQueued++;
 				}
@@ -784,7 +813,8 @@ export class BlobSyncManager {
 
 		this.log(
 			`reconcile: ${uploadQueued} uploads queued, ` +
-				`${downloadQueued} downloads queued, ${skipped} skipped`,
+				`${downloadQueued} downloads queued, ${skipped} skipped, ` +
+				`${offlineDeletes} offline deletes applied`,
 		);
 
 		return { uploadQueued, downloadQueued, skipped };

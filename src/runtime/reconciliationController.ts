@@ -38,6 +38,7 @@ import {
 	ORIGIN_DISK_SYNC_OPEN_IDLE_RECOVER,
 } from "../sync/origins";
 import { isBoundFileBothChanged, planClosedFileReconcile } from "./reconcile/closedFilePlanner";
+import { classifyMissingOnDiskPath } from "./reconcile/missingOnDiskPolicy";
 import { planBaselineAdvancement, type BaselineActionKind } from "./reconcile/baselineAdvancementPolicy";
 import { evaluateSafetyBrake } from "./reconcile/safetyBrakePolicy";
 import {
@@ -493,6 +494,10 @@ export class ReconciliationController {
 				eligibleFiles.push(file);
 				diskPresentPaths.add(file.path);
 			}
+			// Full on-disk listing (including files excluded by settings).
+			// SYNC-01 classification needs true absence from disk, not just
+			// absence from the syncable set.
+			const allDiskFilePaths = new Set(allMdFiles.map((file) => file.path));
 
 			let changed: TFile[] = [];
 			let unchanged: TFile[] = [];
@@ -688,6 +693,98 @@ export class ReconciliationController {
 				// correct input, not a flattened "defer-to-crdt-flush" for everything.
 				const updatesToFlush: Array<{ path: string; baselineActionKind: BaselineActionKind }> = [];
 				for (const path of result.createdOnDisk) {
+					// SYNC-01: "missing from disk" is two opposite cases. A
+					// path this device never materialized is a new arrival;
+					// a path present in the persisted disk index was deleted
+					// here while the plugin was off. Classify BEFORE writing
+					// CRDT content back, or the delete is silently undone.
+					const missingYtext = vaultSync.getTextForPath(path);
+					const missingCrdtContent = missingYtext
+						? yTextToString(missingYtext) ?? ""
+						: null;
+					const missingCrdtHash = missingCrdtContent !== null
+						? await contentBaselineHash(missingCrdtContent)
+						: null;
+					const diskIndexEntry = this.deps.getDiskIndex()[path];
+					const missingAction = classifyMissingOnDiskPath({
+						mode,
+						absentFromDiskListing: !allDiskFilePaths.has(path),
+						hasDiskIndexEntry: diskIndexEntry !== undefined,
+						baselineHash: diskIndexEntry?.contentHash ?? null,
+						crdtHash: missingCrdtHash,
+					});
+					if (missingAction.kind === "offline-delete") {
+						this.deps.recordFlightPathEvent?.({
+							priority: "important",
+							kind: PRODUCT_EVENT_KIND.reconcileFileDecision,
+							severity: "info",
+							scope: "file",
+							source: "reconciliationController",
+							layer: "reconcile",
+							path,
+							data: {
+								decision: "offline-delete",
+								reason: missingAction.reason,
+								conflictRisk: "none",
+							},
+						});
+						vaultSync.handleDelete(path, this.deps.getSettings().deviceName);
+						this.deps.trace("reconcile", "reconcile-offline-delete-applied", {
+							path,
+							reason: missingAction.reason,
+						});
+						continue;
+					}
+					if (missingAction.kind === "offline-delete-conflict") {
+						// Delete raced a remote edit. Preserve the CRDT side
+						// as a conflict artifact first; only then may the
+						// delete win at the path. If preservation is capped
+						// or fails, fall through to the legacy create so the
+						// remote edit is never dropped unpreserved.
+						let preserved = false;
+						try {
+							const conflictPath = await this.createMarkdownConflictArtifact(
+								path,
+								missingCrdtContent!,
+								"offline-delete-crdt-past-baseline",
+								"crdt",
+							);
+							preserved = conflictPath !== null
+								|| (this.conflictArtifactsCreatedByPath.get(path) ?? 0) > 0;
+						} catch (err) {
+							this.deps.trace("conflict", "offline-delete-conflict-preserve-failed", {
+								path,
+								reason: missingAction.reason,
+								error: err instanceof Error ? err.message : String(err),
+							});
+						}
+						if (preserved) {
+							this.deps.recordFlightPathEvent?.({
+								priority: "critical",
+								kind: PRODUCT_EVENT_KIND.reconcileFileDecision,
+								severity: "info",
+								scope: "file",
+								source: "reconciliationController",
+								layer: "reconcile",
+								path,
+								data: {
+									decision: "offline-delete-conflict-preserved",
+									reason: missingAction.reason,
+									conflictRisk: "high",
+								},
+							});
+							vaultSync.handleDelete(path, this.deps.getSettings().deviceName);
+							this.deps.trace("conflict", "reconcile-offline-delete-conflict-preserved", {
+								path,
+								reason: missingAction.reason,
+							});
+							continue;
+						}
+						this.deps.log(
+							`reconcile: "${path}" was deleted offline but CRDT moved past ` +
+							`baseline and preservation failed — recreating from CRDT instead of deleting`,
+						);
+					}
 					this.deps.recordFlightPathEvent?.({
 						priority: "important",
 						kind: PRODUCT_EVENT_KIND.reconcileFileDecision,
@@ -708,7 +805,7 @@ export class ReconciliationController {
 					const ytext = vaultSync.getTextForPath(path);
 					if (ytext) {
 						const crdtContent = yTextToString(ytext) ?? "";
-						const crdtHash = await contentBaselineHash(crdtContent);
+						const crdtHash = missingCrdtHash ?? await contentBaselineHash(crdtContent);
 						const baselineAction = planBaselineAdvancement({
 							actionKind: "crdt-created-on-disk",
 							diskHash: null,
