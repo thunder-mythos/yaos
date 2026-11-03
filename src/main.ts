@@ -1,4 +1,4 @@
-import { MarkdownView, Notice, Plugin, TFile, arrayBufferToHex } from "obsidian";
+import { MarkdownView, Notice, Platform, Plugin, TFile, arrayBufferToHex } from "obsidian";
 import {
 	DEFAULT_SETTINGS,
 	VaultSyncSettingTab,
@@ -120,6 +120,22 @@ type PersistedPluginState = Partial<VaultSyncSettings> & {
 	_frontmatterQuarantine?: FrontmatterQuarantineEntry[];
 	_preservedUnresolved?: PreservedUnresolvedEntry[];
 };
+
+/**
+ * Thunder fork: seed a readable device name from the platform instead of
+ * an opaque timestamp id, so cursors, file meta, and snapshot records say
+ * which of his devices did what. Only used when no name is stored yet, so
+ * an existing device name is never renamed. The name stays editable in
+ * settings, as before.
+ */
+function defaultThunderDeviceName(): string {
+	if (Platform.isIosApp) return "iPhone";
+	if (Platform.isAndroidApp) return "Android";
+	if (Platform.isMacOS) return "Mac";
+	if (Platform.isWin) return "Windows PC";
+	if (Platform.isLinux) return "Linux PC";
+	return `device-${Date.now().toString(36)}`;
+}
 
 export default class VaultCrdtSyncPlugin extends Plugin {
 	settings: VaultSyncSettings = DEFAULT_SETTINGS;
@@ -446,7 +462,7 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 
 		if (!this.settings.deviceName) {
 			await this.updateSettings((settings) => {
-				settings.deviceName = `device-${Date.now().toString(36)}`;
+				settings.deviceName = defaultThunderDeviceName();
 			}, "startup-generate-device-name");
 		}
 

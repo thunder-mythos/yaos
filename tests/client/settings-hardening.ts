@@ -1,5 +1,6 @@
 import {
 	attachmentSizeCapKB,
+	DEFAULT_SETTINGS,
 	MAX_ATTACHMENT_SIZE_KB,
 	readVaultSyncSettings,
 } from "../../src/settings/settingsStore";
@@ -34,6 +35,21 @@ s.section("Test 3: valid attachment max is preserved");
 	});
 	s.check(settings.maxAttachmentSizeKB === 4096, "valid attachment setting is preserved");
 	s.check(!migrated, "valid attachment setting does not force migration");
+}
+
+s.section("Test 4a: Thunder fork defaults (List A)");
+{
+	s.check(DEFAULT_SETTINGS.enableAttachmentSync === false, "attachment sync defaults off");
+	s.check(DEFAULT_SETTINGS.externalEditPolicy === "closed-only", "external edits default to closed-only");
+	s.check(DEFAULT_SETTINGS.showRemoteCursors === false, "remote cursors default off");
+	s.check(DEFAULT_SETTINGS.maxFileSizeKB === 2048, "text file cap stays 2048 KB");
+	s.check(DEFAULT_SETTINGS.attachmentConcurrency === 1, "attachment concurrency stays 1");
+	const fresh = readVaultSyncSettings(null);
+	s.check(fresh.settings.enableAttachmentSync === false, "fresh settings do not force attachment sync on");
+	const legacy = readVaultSyncSettings({ enableAttachmentSync: false });
+	s.check(legacy.settings.enableAttachmentSync === false, "stored attachment-off is kept, not forced on");
+	const storedOn = readVaultSyncSettings({ enableAttachmentSync: true });
+	s.check(storedOn.settings.enableAttachmentSync === true, "a stored attachment-on choice is kept as stored");
 }
 
 s.section("Test 4: server capability can lower the effective attachment cap");

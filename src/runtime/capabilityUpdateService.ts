@@ -41,10 +41,15 @@ export type UpdateState = {
 };
 
 const UPDATE_MANIFEST_URLS = [
-	"https://github.com/kavinsood/yaos/releases/latest/download/update-manifest.json",
+	"https://github.com/thunder-mythos/yaos/releases/latest/download/update-manifest.json",
 ] as const;
 const UPDATE_MANIFEST_CACHE_MS = 24 * 60 * 60 * 1000;
 export const CAPABILITY_REFRESH_INTERVAL_MS = 30_000;
+// Thunder fork: once capabilities are known and report no R2 (both the
+// attachment and snapshot planes off), the background poll backs off to
+// this interval. Startup and manual settings refreshes still re-check
+// immediately, so newly bound R2 is noticed on next launch or on Refresh.
+export const CAPABILITY_REFRESH_INTERVAL_NO_R2_MS = 6 * 60 * 60 * 1000;
 const GITHUB_OPS_WORKFLOW_PATH = ".github/workflows/yaos-ops.yml";
 
 function buildGithubOpsBootstrapWorkflowYaml(): string {
@@ -180,7 +185,12 @@ export class CapabilityUpdateService {
 	}
 
 	shouldRefreshCapabilities(now = Date.now()): boolean {
-		return now - this.lastCapabilityRefreshAt >= CAPABILITY_REFRESH_INTERVAL_MS;
+		const caps = this.serverCapabilities;
+		const noR2Known = caps !== null && caps.attachments === false && caps.snapshots === false;
+		const interval = noR2Known
+			? CAPABILITY_REFRESH_INTERVAL_NO_R2_MS
+			: CAPABILITY_REFRESH_INTERVAL_MS;
+		return now - this.lastCapabilityRefreshAt >= interval;
 	}
 
 	hydratePersistedCaches(

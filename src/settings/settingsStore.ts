@@ -37,8 +37,8 @@ export interface VaultSyncSettings {
 	maxFileSizeKB: number;
 	/**
 	 * How to handle external disk modifications (git pull, other editors).
-	 *   "always"      — always import into CRDT (default, current behavior)
-	 *   "closed-only" — import only for files not open in an editor
+	 *   "always"      — always import into CRDT
+	 *   "closed-only" — import only for files not open in an editor (Thunder fork default)
 	 *   "never"       — never import (CRDT is sole source of truth)
 	 */
 	externalEditPolicy: ExternalEditPolicy;
@@ -69,13 +69,13 @@ export const DEFAULT_SETTINGS: VaultSyncSettings = {
 	frontmatterGuardEnabled: true,
 	excludePatterns: "",
 	maxFileSizeKB: 2048,
-	externalEditPolicy: "always",
-	enableAttachmentSync: true,
+	externalEditPolicy: "closed-only",
+	enableAttachmentSync: false,
 	attachmentSyncExplicitlyConfigured: false,
 	maxAttachmentSizeKB: MAX_ATTACHMENT_SIZE_KB,
 	// requestUrl cannot be hard-aborted; default to 1 to avoid stacked zombie transfers.
 	attachmentConcurrency: 1,
-	showRemoteCursors: true,
+	showRemoteCursors: false,
 	updateRepoUrl: "",
 	updateRepoBranch: "main",
 	qaDebugMode: false,
@@ -114,13 +114,10 @@ export function readVaultSyncSettings(
 		data as Partial<VaultSyncSettings>,
 	);
 	let migrated = false;
-	if (typeof data?.attachmentSyncExplicitlyConfigured !== "boolean") {
-		settings.attachmentSyncExplicitlyConfigured = data?.enableAttachmentSync === true;
-		if (data?.enableAttachmentSync !== true) {
-			settings.enableAttachmentSync = true;
-		}
-		migrated = true;
-	}
+	// Thunder fork: no force-on migration. A stored attachment choice is kept
+	// as stored, and a fresh install stays off (DEFAULT_SETTINGS above).
+	// Upstream forced this back to true for any settings without an explicit
+	// choice, which aimed the blob plane at a server with no R2 bound.
 	if (
 		typeof settings.maxAttachmentSizeKB !== "number" ||
 		!Number.isFinite(settings.maxAttachmentSizeKB) ||

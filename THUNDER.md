@@ -52,3 +52,18 @@ Everything else on this branch is upstream 2.1.1 plus the one preserved fork com
 ## State
 
 See `yaos-thunder-state.json` for the recorded base commit, base version, schema version, branch, and date.
+
+## Customization defaults, List A (local only, 2026-11-03)
+
+Implemented from `~/workspace/yaos-fix-work/customization.md`, List A only. Nothing here is pushed, deployed, or live. The live worker is unchanged; the ticket TTL below is staged config that takes effect only on a redeploy Thunder orders separately.
+
+- A1: attachment sync defaults off (`DEFAULT_SETTINGS.enableAttachmentSync`), and the migration that forced it back on for settings without an explicit choice is removed. A stored choice is kept as stored. Toggle stays in settings.
+- A2: once capabilities are known and report no R2 (attachments and snapshots both off), the background capability poll backs off from 30 seconds to 6 hours. Startup and manual settings refreshes still re-check immediately.
+- A3: a device with no stored name is seeded from the platform (iPhone, Android, Mac, Windows PC, Linux PC) instead of `device-` plus a timestamp. An existing name is never renamed, and the name stays editable in settings. No new prompt modal was added; that part stays for Thunder's call.
+- A4: the update manifest URL points at his fork (`thunder-mythos/yaos` releases) instead of upstream, so upstream releases stop reading as updates he should take.
+- A5: staged only in `server/wrangler.toml` as `YAOS_TICKET_TTL_MS = "3600000"` (60 minutes). Live worker unchanged until a redeploy.
+- A6: external edits default to `closed-only` instead of `always`. Reversible in settings, Advanced, "Edits from other apps".
+- A7: remote cursors default off. Toggle stays in the Collaboration group.
+- A8: no code change, deliberate decisions recorded here: `maxFileSizeKB` stays 2048 and `attachmentConcurrency` stays 1, because his sample data fits both with headroom and concurrency 1 matches the un-abortable transfer note in code.
+
+List B from the customization analysis is unchanged and stays a decision list for Thunder. Nothing from List B was implemented.

@@ -58,3 +58,17 @@ enabled = true
 #
 # [vars]
 # YAOS_ENABLE_ADMIN_ROUTES = "true"
+
+# ---------------------------------------------------------------------------
+# Thunder fork defaults (staged config only, 2026-11-03)
+# ---------------------------------------------------------------------------
+#
+# This section changes nothing live until a deploy Thunder orders
+# separately. It stages the List A ticket life for his worker: 60 minutes
+# instead of the 5 minute default, so a phone asleep through a school day
+# or overnight presents far fewer expired tickets on reconnect. The
+# client-side auth recovery fix is separate work; this is the config half.
+# Reversible in one redeploy by changing or removing this value.
+#
+[vars]
+YAOS_TICKET_TTL_MS = "3600000"
