@@ -1,9 +1,14 @@
 function parseSemver(version: string): number[] | null {
 	const normalized = version.trim();
-	if (!/^\d+(\.\d+){0,2}$/.test(normalized)) {
+	// The fork version scheme carries a prerelease suffix (for example
+	// 2.1.1-thunder.1). Compare on the numeric core so floor checks keep
+	// working on fork builds instead of going blind on their own version.
+	const match = /^(\d+(?:\.\d+){0,2})(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.exec(normalized);
+	const core = match?.[1];
+	if (!core) {
 		return null;
 	}
-	return normalized.split(".").map((part) => Number(part));
+	return core.split(".").map((part) => Number(part));
 }
 
 export function compareSemver(left: string, right: string): number | null {

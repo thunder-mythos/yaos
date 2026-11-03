@@ -24,7 +24,9 @@ const versions = JSON.parse(readSource("versions.json")) as Record<string, strin
 const s = suite("release-compatibility-matrix");
 
 function parseVersion(value: string): [number, number, number] | null {
-	const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(value);
+	// Fork builds carry a prerelease suffix (2.1.1-thunder.1). Floor checks
+	// compare on the numeric core, matching src/utils/semver.ts.
+	const match = /^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.exec(value);
 	if (!match) return null;
 	return [Number(match[1]), Number(match[2]), Number(match[3])];
 }
