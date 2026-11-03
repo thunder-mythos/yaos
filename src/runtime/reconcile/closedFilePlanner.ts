@@ -100,6 +100,45 @@ export function planClosedFileReconcile(input: ClosedFileReconcileInput): Closed
 	return mapConflictDecisionToAction(path, decision);
 }
 
+// -----------------------------------------------------------------------
+// Bound-file three-way gate (SYNC-02)
+// -----------------------------------------------------------------------
+
+export interface BoundFileThreeWayInput {
+	readonly baselineHash: string | null;
+	readonly diskHash: string;
+	readonly crdtHash: string;
+}
+
+/**
+ * Decide whether a bound (open) file changed on BOTH sides while the
+ * plugin was off.
+ *
+ * handleBoundFileSyncGap() historically chose a winner purely from which
+ * side the editor buffer happened to equal. That is only sound when at
+ * most one side moved from the persisted baseline: the unchanged side is
+ * the one the editor matches, and the changed side is real work. When
+ * disk and CRDT BOTH differ from the baseline and from each other, the
+ * equality shortcut silently discards one side's work with no conflict
+ * artifact.
+ *
+ * Returns true only for that both-changed case. The controller then
+ * skips the equality shortcuts and falls through to the existing
+ * ambiguous-divergence handling, which preserves both sides as conflict
+ * artifacts and converges the path to the editor content.
+ *
+ * A null baseline (file never settled through a reconcile) returns
+ * false: without a baseline there is no proof both sides changed, so
+ * the legacy shortcut behavior is kept rather than manufacturing
+ * conflict artifacts for ordinary live divergence.
+ */
+export function isBoundFileBothChanged(input: BoundFileThreeWayInput): boolean {
+	const { baselineHash, diskHash, crdtHash } = input;
+	if (baselineHash === null) return false;
+	if (diskHash === crdtHash) return false;
+	return diskHash !== baselineHash && crdtHash !== baselineHash;
+}
+
 /**
  * Map a ClosedFileConflictDecision to a ClosedFileReconcileAction.
  */

@@ -37,7 +37,7 @@ import {
 	ORIGIN_DISK_SYNC_RECOVER_BOUND,
 	ORIGIN_DISK_SYNC_OPEN_IDLE_RECOVER,
 } from "../sync/origins";
-import { planClosedFileReconcile } from "./reconcile/closedFilePlanner";
+import { isBoundFileBothChanged, planClosedFileReconcile } from "./reconcile/closedFilePlanner";
 import { planBaselineAdvancement, type BaselineActionKind } from "./reconcile/baselineAdvancementPolicy";
 import { evaluateSafetyBrake } from "./reconcile/safetyBrakePolicy";
 import {
@@ -1610,9 +1610,48 @@ export class ReconciliationController {
 			};
 		});
 
-		const localOnlyViews = viewStates.filter(
-			(state) => state.editorMatchesDisk && !state.editorMatchesCrdt,
-		);
+		// SYNC-02 three-way gate: the equality shortcuts below are only
+		// sound when at most one side moved from the persisted baseline.
+		// When disk and CRDT both changed while the plugin was off, the
+		// editor matching one side proves nothing about the other side,
+		// and letting the matched side win silently discards real work.
+		// In that case both shortcut view sets are forced empty so the
+		// call falls through to the ambiguous-divergence handling, which
+		// preserves both sides as conflict artifacts before converging.
+		let bothSidesChangedFromBaseline = false;
+		if (crdtContent != null) {
+			const baselineHash = this.deps.getDiskIndex()[file.path]?.contentHash ?? null;
+			if (baselineHash !== null) {
+				const [diskHash, crdtHash] = await Promise.all([
+					contentBaselineHash(content),
+					contentBaselineHash(crdtContent),
+				]);
+				bothSidesChangedFromBaseline = isBoundFileBothChanged({
+					baselineHash,
+					diskHash,
+					crdtHash,
+				});
+				if (bothSidesChangedFromBaseline) {
+					this.deps.log(
+						`syncFileFromDisk: "${file.path}" changed on disk and in CRDT ` +
+						`since the persisted baseline — preserving both sides instead of ` +
+						`applying the editor-equality shortcut`,
+					);
+					this.deps.trace("conflict", "bound-file-both-changed-from-baseline", {
+						path: file.path,
+						diskHash,
+						crdtHash,
+						baselineHash,
+					});
+				}
+			}
+		}
+
+		const localOnlyViews = bothSidesChangedFromBaseline
+			? []
+			: viewStates.filter(
+				(state) => state.editorMatchesDisk && !state.editorMatchesCrdt,
+			);
 		if (localOnlyViews.length > 0) {
 			this.deps.trace("trace", "bound-file-local-only-divergence", {
 				path: file.path,
@@ -1920,9 +1959,11 @@ export class ReconciliationController {
 			return true;
 		}
 
-		const crdtOnlyViews = viewStates.filter(
-			(state) => state.editorMatchesCrdt && !state.editorMatchesDisk,
-		);
+		const crdtOnlyViews = bothSidesChangedFromBaseline
+			? []
+			: viewStates.filter(
+				(state) => state.editorMatchesCrdt && !state.editorMatchesDisk,
+			);
 		if (crdtOnlyViews.length > 0) {
 			const lastEditorActivity = editorBindings?.getLastEditorActivityForPath(file.path) ?? null;
 			const hasRecentEditorActivity = lastEditorActivity != null
