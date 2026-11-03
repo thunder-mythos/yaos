@@ -55,6 +55,11 @@ import {
 	type AmplificationEntry,
 } from "./reconcile/amplificationQuarantinePolicy";
 import { evaluateConflictArtifactCap } from "./reconcile/conflictArtifactPolicy";
+import {
+	resolveConflictByCategory,
+	type NewestWinsResolution,
+} from "./reconcile/conflictCategoryPolicy";
+import { getMetaMtime } from "../sync/fileMeta";
 import { markdownConflictSuffix } from "../sync/markdownConflictArtifact";
 
 
@@ -931,6 +936,73 @@ export class ReconciliationController {
 								}),
 							},
 						});
+
+						// Per-category conflict policy (v1: Waypoint folder
+						// notes, newest-wins). Consulted only at this artifact
+						// decision point: the planner has already judged the
+						// divergence a conflict, so a category claim replaces
+						// artifact preservation wholesale, with no artifact
+						// created and no merge attempted. Files no category
+						// claims fall through to the normal handling below.
+						const categoryResolution = action.kind === "create-conflict-artifact"
+							? resolveConflictByCategory({
+								path,
+								disk: { content: diskContent, editedAt: diskMtimeRaw ?? null },
+								crdt: {
+									content: crdtContent,
+									editedAt: this.getCrdtEditedAtForPath(vaultSync, path),
+								},
+							})
+							: null;
+						if (categoryResolution) {
+							if (categoryResolution.winner === "disk") {
+								forceReplaceYText(ytext, diskContent, ORIGIN_DISK_SYNC_RECOVER_BOUND);
+								const baselineAction = planBaselineAdvancement({
+									actionKind: "conflict-disk-wins",
+									diskHash,
+									crdtHash,
+									previousBaselineHash: baselineHash,
+								});
+								if (baselineAction.kind === "advance") {
+									settledHashes.set(path, baselineAction.hash);
+								}
+								flushedUpdates++;
+							} else {
+								updatesToFlush.push({ path, baselineActionKind: "conflict-crdt-wins" });
+							}
+							this.deps.recordFlightPathEvent?.({
+								priority: "important",
+								kind: PRODUCT_EVENT_KIND.reconcileFileDecision,
+								severity: "info",
+								scope: "file",
+								source: "reconciliationController",
+								layer: "reconcile",
+								path,
+								data: {
+									decision: "conflict-category-newest-wins",
+									reason: action.reason,
+									category: categoryResolution.category,
+									strategy: categoryResolution.strategy,
+									winner: categoryResolution.winner,
+									diskEditedAt: categoryResolution.diskEditedAt,
+									crdtEditedAt: categoryResolution.crdtEditedAt,
+									conflictRisk: "none",
+								},
+							});
+							this.deps.trace("conflict", "conflict-category-policy-applied", {
+								path,
+								category: categoryResolution.category,
+								strategy: categoryResolution.strategy,
+								winner: categoryResolution.winner,
+								reason: action.reason,
+								diskEditedAt: categoryResolution.diskEditedAt,
+								crdtEditedAt: categoryResolution.crdtEditedAt,
+								diskLength: diskContent.length,
+								crdtLength: crdtContent.length,
+								conflictArtifactCreated: false,
+							});
+							continue;
+						}
 
 						// Execute the planned action.
 						if (action.kind === "create-conflict-artifact") {
@@ -2278,7 +2350,65 @@ export class ReconciliationController {
 		let conflictSkippedDedupe = false;
 		let conflictSkippedCap = false;
 		let conflictSkippedAmplification = false;
-		if (crdtContent != null) {
+		// Per-category conflict policy (v1: Waypoint folder notes,
+		// newest-wins), consulted at this ambiguous-divergence artifact
+		// decision, the path the SYNC-02 both-changed gate feeds into.
+		// A claim resolves silently: no artifact, no merge, the newer
+		// side wins wholesale. The policy only runs when there is a
+		// single editor authority, so divergent unsaved editor buffers
+		// keep the normal preservation behavior. The disk side's edit
+		// time is the file's stat mtime; the CRDT side's is its recorded
+		// metadata mtime.
+		let categoryResolution: NewestWinsResolution | null = null;
+		let categoryConvergenceApplied = false;
+		if (crdtContent != null && editorAuthority !== null && vaultSync) {
+			categoryResolution = resolveConflictByCategory({
+				path: file.path,
+				disk: {
+					content,
+					editedAt: typeof file.stat?.mtime === "number" ? file.stat.mtime : null,
+				},
+				crdt: {
+					content: crdtContent,
+					editedAt: this.getCrdtEditedAtForPath(vaultSync, file.path),
+				},
+				detectionContents: [content, crdtContent, editorAuthority],
+			});
+			if (categoryResolution) {
+				const winnerContent = categoryResolution.content;
+				const text = vaultSync.getTextForPath(file.path);
+				if (text) {
+					if (yTextToString(text) !== winnerContent) {
+						forceReplaceYText(text, winnerContent, ORIGIN_DISK_SYNC_RECOVER_BOUND);
+					}
+					categoryConvergenceApplied = yTextToString(text) === winnerContent;
+				}
+				if (categoryConvergenceApplied && editorAuthority !== winnerContent) {
+					for (const state of viewStates) {
+						if (state.editorContent !== winnerContent) {
+							state.view.editor.setValue(winnerContent);
+						}
+					}
+				}
+				if (categoryConvergenceApplied) {
+					this.lastConflictFingerprints.delete(file.path);
+				}
+				this.deps.trace("conflict", "conflict-category-policy-applied", {
+					path: file.path,
+					category: categoryResolution.category,
+					strategy: categoryResolution.strategy,
+					winner: categoryResolution.winner,
+					reason: "bound-file-ambiguous-divergence",
+					diskEditedAt: categoryResolution.diskEditedAt,
+					crdtEditedAt: categoryResolution.crdtEditedAt,
+					diskLength: content.length,
+					crdtLength: crdtContent.length,
+					conflictArtifactCreated: false,
+					convergenceApplied: categoryConvergenceApplied,
+				});
+			}
+		}
+		if (crdtContent != null && !categoryResolution) {
 			// Dedupe: if the same ambiguous fingerprint was already turned into
 			// a conflict artifact, do not create another one. This prevents
 			// infinite conflict artifact spam when convergence fails.
@@ -2372,6 +2502,10 @@ export class ReconciliationController {
 					this.lastConflictFingerprints.delete(file.path);
 				}
 			}
+		}
+
+		if (categoryResolution) {
+			convergenceApplied = categoryConvergenceApplied;
 		}
 
 		this.deps.trace("conflict", "conflict-artifact-needed", {
@@ -2619,6 +2753,29 @@ export class ReconciliationController {
 		// or user intervention will resolve the divergence).
 		this.amplificationHistory.delete(path);
 		return true;
+	}
+
+	/**
+	 * The CRDT side's recorded edit time for a path: the mtime in the
+	 * file's CRDT metadata (fileMeta), or null when the file or its
+	 * mtime is unknown. Paired with the disk file's mtime, this is the
+	 * newest signal for per-category conflict policy. See
+	 * conflictCategoryPolicy.ts for why this pair was chosen.
+	 */
+	private getCrdtEditedAtForPath(vaultSync: VaultSync, path: string): number | null {
+		try {
+			const fileId = vaultSync.getFileId(path);
+			if (!fileId) return null;
+			const meta = (vaultSync as { meta?: unknown }).meta;
+			if (!meta || typeof (meta as { get?: unknown }).get !== "function") {
+				return null;
+			}
+			return getMetaMtime((meta as { get(key: string): unknown }).get(fileId));
+		} catch {
+			// No readable CRDT metadata: no provably newer side, so the
+			// category policy stays silent and normal handling runs.
+			return null;
+		}
 	}
 
 	private async createMarkdownConflictArtifact(
