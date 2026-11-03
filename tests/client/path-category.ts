@@ -186,7 +186,12 @@ s.section("Test 20: dirty path cleanup uses displayPath");
 s.section("Test 21: markdown conflict artifact is local-only excluded");
 {
 	const cat = classify("Notes/idea (YAOS conflict - crdt from Laptop 2026-08-27T11-05-00Z).md");
-	s.check(cat.kind === "excluded", "conflict sibling is not markdown-syncable");
+	s.check(cat.kind === "excluded", "legacy conflict sibling is not markdown-syncable");
 	s.check(cat.kind === "excluded" && cat.reason === "local-only-conflict-artifact", "reason is local-only-conflict-artifact");
+	const newCat = classify("Notes/idea (conflict crdt Laptop 2026-08-27 1105).md");
+	s.check(newCat.kind === "excluded", "new conflict sibling is not markdown-syncable");
+	s.check(newCat.kind === "excluded" && newCat.reason === "local-only-conflict-artifact", "new reason is local-only-conflict-artifact");
+	const newCounter = classify("Notes/idea (conflict crdt Laptop 2026-08-27 1105) 2.md");
+	s.check(newCounter.kind === "excluded", "new conflict sibling with counter suffix is excluded");
 }
 await s.done();

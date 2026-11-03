@@ -55,6 +55,7 @@ import {
 	type AmplificationEntry,
 } from "./reconcile/amplificationQuarantinePolicy";
 import { evaluateConflictArtifactCap } from "./reconcile/conflictArtifactPolicy";
+import { markdownConflictSuffix } from "../sync/markdownConflictArtifact";
 
 
 export interface ReconciliationStats {
@@ -2679,13 +2680,9 @@ export class ReconciliationController {
 		const device = (this.deps.getSettings().deviceName
 			.replace(/[\\/:*?"<>|]/g, "-")
 			.trim() || "unknown-device").slice(0, 50);
-		const stamp = new Date().toISOString()
-			.replace(/\.\d{3}Z$/, "Z")
-			.replace(/[:]/g, "-");
 		// Cap base name to 100 chars to prevent filesystem path length issues
 		const cappedBase = base.slice(0, 100);
-		const sourcePart = source ? ` - ${source}` : "";
-		const suffix = ` (YAOS conflict${sourcePart} from ${device} ${stamp})`;
+		const suffix = markdownConflictSuffix(device, source);
 		// Guard total filename length: suffix + ext + base + margin for
 		// counter suffix (" 99") ≈ suffix.length + ext.length + 4.
 		// Most filesystems cap at 255 bytes per component.

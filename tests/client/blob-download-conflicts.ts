@@ -218,7 +218,7 @@ s.section("Test 1: existing attachment changed during download is quarantined");
 	});
 
 	const conflict = Array.from(files.keys()).find((path) =>
-		path.startsWith("img (YAOS remote conflict") && path.endsWith(".png")
+		path.startsWith("img (conflict remote ") && path.endsWith(".png")
 	);
 	s.check(text(files.get("img.png")!.data) === "local-new", "local changed attachment is preserved");
 	s.check(!!conflict, "remote bytes are written to a conflict artifact");
@@ -238,7 +238,7 @@ s.section("Test 2: unchanged existing attachment can be overwritten");
 	put("img.png", bytes("local-old"));
 	await runDownload(manager, "img.png", bytes("remote"));
 
-	const conflict = Array.from(files.keys()).find((path) => path.includes("YAOS remote conflict"));
+	const conflict = Array.from(files.keys()).find((path) => path.includes("(conflict remote "));
 	s.check(text(files.get("img.png")!.data) === "remote", "unchanged attachment is overwritten by remote bytes");
 	s.check(!conflict, "no conflict artifact is created for unchanged overwrite");
 	s.check(
@@ -269,7 +269,7 @@ s.section("Test 3: create race mismatch is quarantined instead of overwritten");
 	await runDownload(manager, "img.png", bytes("remote"));
 
 	const conflict = Array.from(files.keys()).find((path) =>
-		path.startsWith("img (YAOS remote conflict") && path.endsWith(".png")
+		path.startsWith("img (conflict remote ") && path.endsWith(".png")
 	);
 	s.check(text(files.get("img.png")!.data) === "local-race", "create-race local attachment is preserved");
 	s.check(!!conflict, "remote bytes are written to a conflict artifact after create race");
@@ -302,7 +302,7 @@ s.section("Test 4: create race same hash is skipped");
 
 	await runDownload(manager, "img.png", remote);
 
-	const conflict = Array.from(files.keys()).find((path) => path.includes("YAOS remote conflict"));
+	const conflict = Array.from(files.keys()).find((path) => path.includes("(conflict remote "));
 	s.check(text(files.get("img.png")!.data) === "remote", "matching create-race attachment remains in place");
 	s.check(!conflict, "matching create-race does not create conflict artifact");
 	s.check(

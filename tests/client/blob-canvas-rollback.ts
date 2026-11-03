@@ -129,7 +129,7 @@ async function runDownload(
 
 function findConflict(files: Map<string, StoredFile>, stem: string, ext: string): string | undefined {
 	return Array.from(files.keys()).find(
-		(path) => path.startsWith(`${stem} (YAOS remote conflict`) && path.endsWith(ext),
+		(path) => path.startsWith(`${stem} (conflict remote `) && path.endsWith(ext),
 	);
 }
 

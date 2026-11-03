@@ -37,6 +37,7 @@ import {
 } from "./blobHashCache";
 import { PreservedUnresolvedRegistry, type PreservedUnresolvedEntry, type PreservedUnresolvedReason } from "./preservedUnresolved";
 import { classifyMissingBlobOnDisk } from "../runtime/reconcile/missingOnDiskPolicy";
+import { formatConflictStamp } from "./conflictStamp";
 
 // -------------------------------------------------------------------
 // Config
@@ -246,17 +247,13 @@ function hashPrefix(hash: string | null | undefined): string | null {
 	return typeof hash === "string" ? hash.slice(0, 12) : null;
 }
 
-function conflictPathFor(path: string, date = new Date()): string {
+export function conflictPathFor(path: string, date = new Date()): string {
 	const normalized = normalizePath(path);
 	const slash = normalized.lastIndexOf("/");
 	const dir = slash >= 0 ? normalized.slice(0, slash + 1) : "";
 	const name = slash >= 0 ? normalized.slice(slash + 1) : normalized;
 	const dot = name.lastIndexOf(".");
-	const stamp = date
-		.toISOString()
-		.replace(/\.\d{3}Z$/, "Z")
-		.replace(/[:]/g, "-");
-	const suffix = ` (YAOS remote conflict ${stamp})`;
+	const suffix = ` (conflict remote ${formatConflictStamp(date)})`;
 	const ext = dot > 0 ? name.slice(dot) : "";
 	const base = dot > 0 ? name.slice(0, dot) : name;
 	// Cap base name to prevent filesystem path length issues (255 byte limit)
@@ -265,10 +262,16 @@ function conflictPathFor(path: string, date = new Date()): string {
 	return `${dir}${cappedBase}${suffix}${ext}`;
 }
 
-function isBlobConflictArtifactPath(path: string): boolean {
+const LEGACY_BLOB_CONFLICT_ARTIFACT_RE =
+	/^.+ \(YAOS remote conflict \d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z\)(?: \d+)?(?:\.[^/.]+)?$/u;
+
+const BLOB_CONFLICT_ARTIFACT_RE =
+	/^.+ \(conflict remote \d{4}-\d{2}-\d{2} \d{4}\)(?: \d+)?(?:\.[^/.]+)?$/u;
+
+export function isBlobConflictArtifactPath(path: string): boolean {
 	const normalized = normalizePath(path);
 	const name = normalized.split("/").pop() ?? normalized;
-	return /^.+ \(YAOS remote conflict \d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z\)(?:\.[^/.]+)?$/.test(name);
+	return BLOB_CONFLICT_ARTIFACT_RE.test(name) || LEGACY_BLOB_CONFLICT_ARTIFACT_RE.test(name);
 }
 
 // -------------------------------------------------------------------
