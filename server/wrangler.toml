@@ -14,6 +14,10 @@ class_name = "ServerConfig"
 tag = "v1"
 new_sqlite_classes = ["VaultSyncServer", "ServerConfig"]
 
+# Optional: R2 object storage. Text sync works without it. Attachments
+# and snapshots require it. To enable, follow the R2 section in
+# THUNDER.md: enable R2 in the Cloudflare dashboard, create the bucket
+# below, uncomment this block, and redeploy the worker.
 # [[r2_buckets]]
 # binding = "YAOS_BUCKET"
 # bucket_name = "yaos"

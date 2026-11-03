@@ -250,8 +250,8 @@ export class VaultSyncSettingTab extends PluginSettingTab {
 			{
 				name: "Attachment storage",
 				desc: attachmentsAvailable
-					? "Available on this server. The plugin can sync attachments and snapshots."
-					: "Unavailable on this server. Add object storage in Cloudflare, then redeploy.",
+					? "Available on this server, because R2 is enabled on the worker. The plugin can sync attachments and snapshots."
+					: "Unavailable on this server. Attachments and snapshots require R2 enabled on the worker. Text sync works without it.",
 			},
 			{
 				name: "Refresh attachment capability",
@@ -267,7 +267,7 @@ export class VaultSyncSettingTab extends PluginSettingTab {
 			},
 			{
 				name: "Sync attachments",
-				desc: "Sync images, PDF files, and other attachments through object storage.",
+				desc: "Sync images, PDF files, and other attachments through R2 object storage. Requires R2 enabled on the worker. Sync works without it, attachments just stay on this device. Snapshots require R2 too.",
 				visible: () => this.host.serverSupportsAttachments || !this.host.settings.host,
 				control: { type: "toggle", key: "enableAttachmentSync" },
 			},

@@ -67,3 +67,17 @@ Implemented from `~/workspace/yaos-fix-work/customization.md`, List A only. Noth
 - A8: no code change, deliberate decisions recorded here: `maxFileSizeKB` stays 2048 and `attachmentConcurrency` stays 1, because his sample data fits both with headroom and concurrency 1 matches the un-abortable transfer note in code.
 
 List B from the customization analysis is unchanged and stays a decision list for Thunder. Nothing from List B was implemented.
+
+## R2 is an opt-in (docs only, 2026-11-03)
+
+R2 is NOT enabled. The live worker is unchanged, no bucket is bound, and attachments and snapshots stay off. Text sync works without R2. R2 is only needed for the attachment plane and for snapshots, and the plugin already gates both on the server capability, so nothing breaks while it is off.
+
+Enable path, for when Thunder orders it:
+
+1. Enable R2 in the Cloudflare dashboard for the account that hosts the worker.
+2. Create the R2 bucket named `yaos` (the bucket name in the commented binding in `server/wrangler.toml`).
+3. Uncomment the `[[r2_buckets]]` block in `server/wrangler.toml` (binding `YAOS_BUCKET`, bucket `yaos`).
+4. Redeploy the worker. This is a separate step Thunder orders on its own; it is not done as part of this docs change, and the ticket TTL staged in the same file takes effect at that redeploy too.
+5. In plugin settings, turn on attachments or snapshots. The Attachments group in settings states the R2 requirement on its face.
+
+Until those steps run, leave the binding commented out.

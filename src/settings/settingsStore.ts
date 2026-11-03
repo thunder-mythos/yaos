@@ -49,7 +49,12 @@ export interface VaultSyncSettings {
 	 *   "never"       — never import (CRDT is sole source of truth)
 	 */
 	externalEditPolicy: ExternalEditPolicy;
-	/** Enable attachment (non-markdown) sync via R2 blob store. */
+	/**
+	 * Enable attachment (non-markdown) sync via R2 blob store.
+	 * Attachments and snapshots both require R2 enabled on the worker.
+	 * Text sync works without R2; this toggle only has an effect when
+	 * the server reports the R2 capability.
+	 */
 	enableAttachmentSync: boolean;
 	/** True once the user has explicitly changed the attachment sync toggle. */
 	attachmentSyncExplicitlyConfigured: boolean;
