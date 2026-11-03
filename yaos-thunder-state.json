@@ -20,7 +20,18 @@
     }
   ],
   "pushedBranch": "thunder",
-  "releaseTag": null,
+  "releaseTag": "2.1.1-thunder.1",
+  "releaseName": "2.1.1-thunder.1, Real-Time beta",
+  "releasePrerelease": true,
+  "releaseIsLatest": false,
+  "releaseDate": "2026-11-03",
+  "releaseRepo": "https://github.com/thunder-mythos/yaos/releases/tag/2.1.1-thunder.1",
+  "iteration15Commits": [
+    "c430bc9c",
+    "14e4fe6e",
+    "9f17bb44",
+    "646ddfb3"
+  ],
   "schemaVersion": 3,
   "serverVersion": "0.3.0",
   "upstreamLatestReleaseCommit": "2174eb89538ce7e213e9e33a0e75ecaf1a3f1f58",

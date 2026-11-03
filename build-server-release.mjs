@@ -45,7 +45,7 @@ const updateManifest = {
 	minCompatibleServerVersionForPlugin,
 	minCompatiblePluginVersionForServer,
 	upgradeOrder: "either",
-	releaseNotesUrl: `https://github.com/kavinsood/yaos/releases/tag/${rootPackage.version}`,
+	releaseNotesUrl: `https://github.com/thunder-mythos/yaos/releases/tag/${rootPackage.version}`,
 	upgradeGuideUrl: "https://github.com/kavinsood/yaos#updating-your-server",
 };
 
