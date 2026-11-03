@@ -1,0 +1,30 @@
+{
+  "baseCommit": "c1e5c73dc7faa6eefce3d818c185a518ad870a89",
+  "baseDecision": "fork main as-is, no merge",
+  "baseUpstreamCommit": "2174eb89538ce7e213e9e33a0e75ecaf1a3f1f58",
+  "baseVersion": "2.1.1",
+  "branch": "thunder",
+  "customBranch": "thunder",
+  "date": "2026-11-02",
+  "forkAheadOfUpstreamMain": 1,
+  "forkBehindUpstreamMain": 0,
+  "forkRepo": "https://github.com/thunder-mythos/yaos",
+  "lastSyncDate": "2026-11-02",
+  "note": "Base setup 2026-11-02 per Thunder's fix-first order. Branch thunder created from fork main as-is. No merge was needed: upstream main is exactly the 2.1.1 release commit and fork main is that release plus the one preserved wrangler commit. No fixes built yet, nothing deployed, no release or tag created, live worker not touched, no R2 bound.",
+  "preservedForkCommits": [
+    {
+      "change": "server/wrangler.toml: r2_buckets binding YAOS_BUCKET commented out, so no R2 is bound",
+      "commit": "c1e5c73dc7faa6eefce3d818c185a518ad870a89",
+      "date": "2026-10-03",
+      "subject": "Comment out r2_buckets section"
+    }
+  ],
+  "pushedBranch": "thunder",
+  "releaseTag": null,
+  "schemaVersion": 3,
+  "serverVersion": "0.3.0",
+  "upstreamLatestReleaseCommit": "2174eb89538ce7e213e9e33a0e75ecaf1a3f1f58",
+  "upstreamLatestReleaseTag": "2.1.1",
+  "upstreamRepo": "https://github.com/kavinsood/yaos",
+  "upstreamRepoShort": "kavinsood/yaos"
+}
