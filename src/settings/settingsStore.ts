@@ -25,6 +25,13 @@ export interface VaultSyncSettings {
 	/** Human-readable device name shown in awareness/cursors. */
 	deviceName: string;
 	/**
+	 * True once the one-time device name prompt has been handled: either
+	 * confirmed in the prompt modal, or set by hand in settings. While
+	 * false and the name is still the auto-seeded platform default, the
+	 * prompt shows once on the first successful connection.
+	 */
+	deviceNamePromptHandled: boolean;
+	/**
 	 * Debug mode: verbose console logging plus the flight recorder that backs
 	 * the exportable bug-report trace. Single switch; off by default.
 	 */
@@ -65,6 +72,7 @@ export const DEFAULT_SETTINGS: VaultSyncSettings = {
 	token: "",
 	vaultId: "",
 	deviceName: "",
+	deviceNamePromptHandled: false,
 	debug: false,
 	frontmatterGuardEnabled: true,
 	excludePatterns: "",

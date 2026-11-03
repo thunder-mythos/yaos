@@ -6,6 +6,12 @@ import {
 	type VaultSyncSettings,
 } from "./settings";
 import { SettingsStore } from "./settings/settingsStore";
+import {
+	autoDeviceNameForPlatform,
+	confirmDeviceNameChoice,
+	shouldShowDeviceNamePrompt,
+} from "./settings/deviceNamePrompt";
+import { DeviceNamePromptModal } from "./settings/DeviceNamePromptModal";
 import { VaultSync, type ReconcileMode } from "./sync/vaultSync";
 import { SCHEMA_VERSION } from "./sync/vaultSync";
 import { EditorBindingManager } from "./sync/editorBinding";
@@ -129,12 +135,7 @@ type PersistedPluginState = Partial<VaultSyncSettings> & {
  * settings, as before.
  */
 function defaultThunderDeviceName(): string {
-	if (Platform.isIosApp) return "iPhone";
-	if (Platform.isAndroidApp) return "Android";
-	if (Platform.isMacOS) return "Mac";
-	if (Platform.isWin) return "Windows PC";
-	if (Platform.isLinux) return "Linux PC";
-	return `device-${Date.now().toString(36)}`;
+	return autoDeviceNameForPlatform(Platform) ?? `device-${Date.now().toString(36)}`;
 }
 
 export default class VaultCrdtSyncPlugin extends Plugin {
@@ -194,6 +195,9 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 	// ---------------------------------------------------------------------------
 	declare getEngineControlPort?: () => EngineControlPort;
 	declare setQaNetworkHold?: (mode: "offline" | "online") => void;
+
+	/** One-time device name prompt: offered at most once per session. */
+	private deviceNamePromptOfferedThisSession = false;
 
 	/** Domain-level trace sink. Routes to the debug runtime when active, noop otherwise. */
 	private traceSink: TraceSink = new NoopTraceSink();
@@ -903,6 +907,9 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 						layer: "provider",
 						connectionGeneration: this.vaultSync?.connectionGeneration,
 					});
+					// First successful connection: offer the one-time
+					// device name prompt if it still applies.
+					this.maybeShowDeviceNamePrompt();
 				}
 			});
 			this.statusInterval = window.setInterval(() => {
@@ -2053,6 +2060,30 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 			console.error("[yaos] Teardown during unload completed with errors:", error);
 			this.log(`Teardown during unload completed with errors: ${formatUnknown(error)}`);
 		});
+	}
+
+	/**
+	 * Offer the one-time device name prompt on a successful connection.
+	 * Shows only when the persisted flag is unset and the current name
+	 * is still the auto-seeded platform default, and at most once per
+	 * session. Confirming saves the edited name and sets the flag.
+	 */
+	private maybeShowDeviceNamePrompt(): void {
+		if (this.deviceNamePromptOfferedThisSession) return;
+		const shouldShow = shouldShowDeviceNamePrompt({
+			deviceName: this.settings.deviceName,
+			autoDefaultName: autoDeviceNameForPlatform(Platform),
+			promptHandled: this.settings.deviceNamePromptHandled,
+		});
+		if (!shouldShow) return;
+		this.deviceNamePromptOfferedThisSession = true;
+		new DeviceNamePromptModal(this.app, this.settings.deviceName, async (name) => {
+			await this.updateSettings((settings) => {
+				const choice = confirmDeviceNameChoice(settings, name);
+				settings.deviceName = choice.deviceName;
+				settings.deviceNamePromptHandled = choice.deviceNamePromptHandled;
+			}, "device-name-prompt");
+		}).open();
 	}
 
 	async loadSettings() {

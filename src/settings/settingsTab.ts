@@ -419,6 +419,9 @@ export class VaultSyncSettingTab extends PluginSettingTab {
 			case "deviceName":
 				await this.host.updateSettings((settings) => {
 					settings.deviceName = expectStringValue(key, value).trim();
+					// Renaming by hand counts as handling the one-time
+					// device name prompt, so it never appears afterwards.
+					settings.deviceNamePromptHandled = true;
 				}, "settings:device-name");
 				return;
 			case "excludePatterns":
