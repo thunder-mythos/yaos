@@ -1164,6 +1164,18 @@ export class BlobSyncManager {
 		try {
 			const normalized = normalizePath(item.path);
 
+			// ISSUE-23 baseline: the raw hash-cache entry is the last hash
+			// this device recorded for this path. Capture it BEFORE the
+			// disk-hash lookup below, which overwrites the entry with the
+			// current disk hash on a stat miss and would destroy the
+			// baseline. A disk hash that differs from this baseline is
+			// positive evidence the local file moved after its last sync,
+			// so a remote download must not overwrite it.
+			const syncedBaselineHash =
+				this.hashCache[item.path]?.hash ??
+				this.hashCache[normalized]?.hash ??
+				null;
+
 			// Check if file already exists with matching hash
 			const existing = this.app.vault.getAbstractFileByPath(normalized);
 			let diskHashBefore: string | null = null;
@@ -1226,11 +1238,54 @@ export class BlobSyncManager {
 				);
 			}
 
-			// Suppress path to prevent re-upload from vault event
-			this.suppress(item.path);
-
 			// Write to disk
 			if (existing instanceof TFile) {
+				// ISSUE-23: do not overwrite a locally diverged file.
+				// Overwriting was the rollback: a remote version arriving
+				// after a restart or from another device replaced local
+				// edits that had not reached the CRDT yet, because the
+				// old code only preserved the file if it changed DURING
+				// the download. A file already diverged before the
+				// download started, or with a local upload still queued,
+				// gets the same preservation: remote bytes go to a
+				// conflict artifact and the local file stays untouched.
+				// A file still at its synced baseline is the normal
+				// stale case and is overwritten as before. With no
+				// baseline at all there is no evidence of a local edit,
+				// so the legacy overwrite stands (see the residual limit
+				// noted on the ISSUE-23 commit).
+				const hasPendingLocalUpload =
+					this.uploadQueue.has(item.path) ||
+					this.uploadQueue.has(normalized) ||
+					this.inflightUploads.has(item.path) ||
+					this.inflightUploads.has(normalized) ||
+					this.uploadDebounce.has(item.path) ||
+					this.uploadDebounce.has(normalized);
+				const divergedBeforeDownload =
+					diskHashBefore !== null &&
+					syncedBaselineHash !== null &&
+					syncedBaselineHash !== diskHashBefore;
+				if (hasPendingLocalUpload || divergedBeforeDownload) {
+					const conflictPath =
+						await this.writeDownloadConflictArtifact(
+							normalized,
+							data,
+							"existing-diverged-before-download",
+						);
+					this.trace?.("blob", "download-conflict-quarantined", {
+						path: item.path,
+						conflictPath,
+						hashPrefix: hashPrefix(item.hash),
+						diskHashBeforePrefix: hashPrefix(diskHashBefore),
+						diskHashAfterPrefix: hashPrefix(diskHashBefore),
+						reason: "existing-diverged-before-download",
+						sizeBytes: data.byteLength,
+					});
+					this.log(
+						`download: conflict artifact "${conflictPath}" for "${item.path}" ` +
+							`(local file diverged before download)`,
+					);
+				} else {
 				const diskHashAfterDownload = await this.hashExistingFile(
 					existing,
 					item.path,
@@ -1268,11 +1323,16 @@ export class BlobSyncManager {
 						action: "overwrite-existing",
 						sizeBytes: data.byteLength,
 					});
+					// Suppress only on a real overwrite, so a preserved
+					// file does not lose a genuine edit event in the
+					// suppression window.
+					this.suppress(item.path);
 					await this.app.vault.modifyBinary(existing, data);
 					targetHasRemoteBytes = true;
 					this.log(
 						`download: updated "${item.path}" (${data.byteLength} bytes) in ${Date.now() - start}ms`,
 					);
+				}
 				}
 			} else {
 				this.trace?.("blob", "download-overwrite-decision", {
@@ -1300,6 +1360,7 @@ export class BlobSyncManager {
 					}
 				}
 				try {
+					this.suppress(item.path);
 					await this.app.vault.createBinary(normalized, data);
 					targetHasRemoteBytes = true;
 					this.log(
@@ -1477,7 +1538,10 @@ export class BlobSyncManager {
 	private async writeDownloadConflictArtifact(
 		targetPath: string,
 		data: ArrayBuffer,
-		reason: "existing-changed-during-download" | "create-race-mismatch",
+		reason:
+			| "existing-changed-during-download"
+			| "existing-diverged-before-download"
+			| "create-race-mismatch",
 	): Promise<string> {
 		const baseConflictPath = conflictPathFor(targetPath);
 		for (let i = 0; i < 100; i++) {
